@@ -1,67 +1,83 @@
 package Locator;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 
 public class DomSnapshotManager {
 
     private static final String SNAPSHOT_DIRECTORY =
-            "snapshots";
+            "D:\\LocatorHealthPOC\\locator-health-poc\\snapshots";
 
-    private static final DateTimeFormatter TIMESTAMP_FORMAT =
-            DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
-    /**
-     * Saves the supplied page source as an HTML snapshot.
-     *
-     * @param pageName  logical page name, for example "login"
-     * @param pageSource current Selenium page source
-     * @return path of the saved snapshot
-     */
-    public Path saveSnapshot(
+    public Path getSnapshotPath(String pageName) {
+
+        return Paths.get(
+                SNAPSHOT_DIRECTORY,
+                pageName + ".html"
+        );
+    }
+
+
+    public boolean snapshotExists(String pageName) {
+
+        return Files.exists(
+                getSnapshotPath(pageName)
+        );
+    }
+
+
+    public void saveSnapshot(
             String pageName,
-            String pageSource) throws IOException {
-
-        if (pageSource == null || pageSource.isBlank()) {
-            throw new IllegalArgumentException(
-                    "Page source cannot be empty."
-            );
-        }
-
-        String timestamp =
-                LocalDateTime.now()
-                        .format(TIMESTAMP_FORMAT);
-
-        Path snapshotDirectory =
-                Paths.get(SNAPSHOT_DIRECTORY);
-
-        Files.createDirectories(snapshotDirectory);
-
-        String fileName =
-                pageName + "_" + timestamp + ".html";
+            String html)
+            throws IOException {
 
         Path snapshotPath =
-                snapshotDirectory.resolve(fileName);
+                getSnapshotPath(pageName);
+
+        Files.createDirectories(
+                snapshotPath.getParent()
+        );
 
         Files.writeString(
                 snapshotPath,
-                pageSource,
-                StandardCharsets.UTF_8
+                html
         );
 
         System.out.println(
-                "\nDOM snapshot saved:"
+                "DOM snapshot saved:"
         );
 
         System.out.println(
                 snapshotPath.toAbsolutePath()
         );
+    }
 
-        return snapshotPath;
+
+    public void replaceSnapshot(
+            String pageName,
+            String html)
+            throws IOException {
+
+        Path snapshotPath =
+                getSnapshotPath(pageName);
+
+        Files.deleteIfExists(
+                snapshotPath
+        );
+
+        Files.writeString(
+                snapshotPath,
+                html
+        );
+
+        System.out.println(
+                "DOM snapshot replaced:"
+        );
+
+        System.out.println(
+                snapshotPath.toAbsolutePath()
+        );
     }
 }

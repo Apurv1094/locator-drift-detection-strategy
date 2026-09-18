@@ -8,7 +8,8 @@ import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
-import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 
@@ -16,81 +17,192 @@ public class LocatorHealthTest {
 
     public static void main(String[] args) {
 
-        WebDriver driver = new ChromeDriver();
+        WebDriver driver =
+                new ChromeDriver();
 
         try {
 
-            // 1. Open application
+            // =========================================================
+            // CONFIGURATION
+            // =========================================================
+
+            String pageName = "login";
+
             String url =
                     "https://opensource-demo.orangehrmlive.com/web/index.php/auth/login";
 
-            System.out.println("Opening URL:");
-            System.out.println(url);
-
-            driver.get(url);
-
-            // 2. Wait for page to load
-            WebDriverWait wait =
-                    new WebDriverWait(driver, Duration.ofSeconds(10));
-
-            wait.until(
-                    webDriver ->
-                            webDriver.getPageSource().contains("Username")
-            );
-
-            /// 3. Fetch current page source
-            String pageSource =
-                    driver.getPageSource();
-
-            System.out.println(
-                    "\nPage source fetched successfully."
-            );
-
-// 3A. Save DOM snapshot
             DomSnapshotManager snapshotManager =
                     new DomSnapshotManager();
 
-            snapshotManager.saveSnapshot(
-                    "login",
-                    pageSource
+            Path snapshotPath =
+                    snapshotManager.getSnapshotPath(
+                            pageName
+                    );
+
+            boolean oldSnapshotExists =
+                    snapshotManager.snapshotExists(
+                            pageName
+                    );
+
+            System.out.println(
+                    "\n=============================================="
             );
 
-            // 4. Analyze current DOM
+            System.out.println(
+                    "       LOCATOR DRIFT DETECTION POC"
+            );
+
+            System.out.println(
+                    "=============================================="
+            );
+
+            System.out.println(
+                    "Page          : "
+                            + pageName
+            );
+
+            System.out.println(
+                    "Snapshot Path : "
+                            + snapshotPath.toAbsolutePath()
+            );
+
+            System.out.println(
+                    "Previous DOM  : "
+                            + (
+                            oldSnapshotExists
+                                    ? "FOUND"
+                                    : "NOT FOUND"
+                    )
+            );
+
+            // =========================================================
+            // OPEN APPLICATION
+            // =========================================================
+
+            System.out.println(
+                    "\n========== OPEN APPLICATION =========="
+            );
+
+            System.out.println(
+                    "URL: "
+                            + url
+            );
+
+            driver.get(url);
+
+            WebDriverWait wait =
+                    new WebDriverWait(
+                            driver,
+                            Duration.ofSeconds(15)
+                    );
+
+            wait.until(
+                    webDriver ->
+                            webDriver.getPageSource()
+                                    .contains("Username")
+            );
+
+            // =========================================================
+            // CURRENT DOM
+            // =========================================================
+
+            String currentHtml =
+                    driver.getPageSource();
+
+            System.out.println(
+                    "\n========== CURRENT DOM =========="
+            );
+
+            System.out.println(
+                    "Page source fetched successfully."
+            );
+
+            // =========================================================
+            // CURRENT DOM INVENTORY
+            // =========================================================
+
             DomAnalyzer domAnalyzer =
-                    new DomAnalyzer(pageSource);
+                    new DomAnalyzer(
+                            currentHtml
+                    );
+
+            System.out.println(
+                    "\n========== CURRENT DOM INVENTORY =========="
+            );
 
             domAnalyzer.printElementInventory();
 
-            // 5. Extract locators from Page Object
+            // =========================================================
+            // EXTRACT PAGE OBJECT LOCATORS
+            // =========================================================
+
             PageObjectLocatorExtractor extractor =
                     new PageObjectLocatorExtractor();
 
             List<LocatorDefinition> locators =
-                    extractor.extract(LoginPage.class);
+                    extractor.extract(
+                            LoginPage.class
+                    );
 
-            // 6. Validate Page Object locators
+            System.out.println(
+                    "\n========== PAGE OBJECT LOCATORS =========="
+            );
+
+            System.out.println(
+                    "Total locators found: "
+                            + locators.size()
+            );
+
+            // =========================================================
+            // LOCATOR HEALTH
+            // =========================================================
+
             LocatorValidator validator =
-                    new LocatorValidator(driver);
+                    new LocatorValidator(
+                            driver
+                    );
 
             System.out.println(
                     "\n========== LOCATOR HEALTH =========="
             );
 
-            for (LocatorDefinition locator : locators) {
+            for (LocatorDefinition locator :
+                    locators) {
 
                 boolean valid = false;
 
-                if (locator.getLocatorType().equals("XPATH")) {
+                String type =
+                        locator.getLocatorType();
 
-                    By seleniumLocator =
-                            By.xpath(locator.getLocatorValue());
+                String value =
+                        locator.getLocatorValue();
 
-                    valid =
-                            validator.isValid(seleniumLocator);
+                try {
+
+                    if (type.equalsIgnoreCase(
+                            "XPATH")) {
+
+                        valid =
+                                validator.isValid(
+                                        By.xpath(value)
+                                );
+
+                    } else if (
+                            type.equalsIgnoreCase(
+                                    "CSS")) {
+
+                        valid =
+                                validator.isValid(
+                                        By.cssSelector(value)
+                                );
+                    }
+
+                } catch (Exception ignored) {
+                    valid = false;
                 }
 
                 System.out.println(
-                        "Page Object  : "
+                        "\nPage Object  : "
                                 + locator.getPageObjectFile()
                 );
 
@@ -101,17 +213,21 @@ public class LocatorHealthTest {
 
                 System.out.println(
                         "Locator Type : "
-                                + locator.getLocatorType()
+                                + type
                 );
 
                 System.out.println(
                         "Locator Value: "
-                                + locator.getLocatorValue()
+                                + value
                 );
 
                 System.out.println(
                         "Status       : "
-                                + (valid ? "VALID" : "BROKEN")
+                                + (
+                                valid
+                                        ? "VALID"
+                                        : "BROKEN"
+                        )
                 );
 
                 System.out.println(
@@ -119,24 +235,169 @@ public class LocatorHealthTest {
                 );
             }
 
-            // 7. Recover broken locators
-            LocatorRecoveryEngine recoveryEngine =
-                    new LocatorRecoveryEngine(driver);
+            // =========================================================
+            // OLD DOM vs CURRENT DOM
+            // =========================================================
 
-            System.out.println(
-                    "\n========== LOCATOR RECOVERY =========="
-            );
+            if (oldSnapshotExists) {
 
-            for (LocatorDefinition locator : locators) {
+                System.out.println(
+                        "\n========== OLD DOM vs CURRENT DOM =========="
+                );
 
-                recoveryEngine.processLocator(locator);
+                String oldHtml =
+                        Files.readString(
+                                snapshotPath
+                        );
+
+                DomComparator comparator =
+                        new DomComparator();
+
+                DomComparisonResult comparison =
+                        comparator.compare(
+                                oldHtml,
+                                currentHtml
+                        );
+
+                System.out.println(
+                        "Old meaningful elements     : "
+                                + comparison.getOldElementCount()
+                );
+
+                System.out.println(
+                        "Current meaningful elements : "
+                                + comparison.getCurrentElementCount()
+                );
+
+                System.out.println(
+                        "Unchanged elements          : "
+                                + comparison.getUnchangedCount()
+                );
+
+                System.out.println(
+                        "Changed elements            : "
+                                + comparison.getChangedCount()
+                );
+
+                System.out.println(
+                        "Added elements              : "
+                                + comparison.getAddedCount()
+                );
+
+                System.out.println(
+                        "Removed elements            : "
+                                + comparison.getRemovedCount()
+                );
+
+                if (!comparison.getChanges()
+                        .isEmpty()) {
+
+                    System.out.println(
+                            "\nDOM CHANGES:"
+                    );
+
+                    for (String change :
+                            comparison.getChanges()) {
+
+                        System.out.println(
+                                "- " + change
+                        );
+                    }
+                } else {
+
+                    System.out.println(
+                            "\nNo meaningful DOM changes detected."
+                    );
+                }
+
+                // =====================================================
+                // LOCATOR RECOVERY
+                // =====================================================
+
+                LocatorRecoveryEngine recoveryEngine =
+                        new LocatorRecoveryEngine(
+                                driver
+                        );
+
+                for (LocatorDefinition locator :
+                        locators) {
+
+                    recoveryEngine.processLocator(
+                            locator,
+                            snapshotPath,
+                            currentHtml
+                    );
+                }
+
+            } else {
+
+                System.out.println(
+                        "\n========== HISTORICAL SNAPSHOT =========="
+                );
+
+                System.out.println(
+                        "No previous snapshot found."
+                );
+
+                System.out.println(
+                        "Current DOM will become "
+                                + "the initial baseline."
+                );
             }
 
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+            // =========================================================
+            // UPDATE BASELINE
+            // =========================================================
+
+            System.out.println(
+                    "\n========== SNAPSHOT UPDATE =========="
+            );
+
+            snapshotManager.replaceSnapshot(
+                    pageName,
+                    currentHtml
+            );
+
+            System.out.println(
+                    "DOM snapshot replaced:"
+            );
+
+            System.out.println(
+                    snapshotPath.toAbsolutePath()
+            );
+
+            System.out.println(
+                    "Snapshot updated successfully."
+            );
+
+            System.out.println(
+                    "New baseline:"
+            );
+
+            System.out.println(
+                    snapshotPath.toAbsolutePath()
+            );
+
+        } catch (Exception e) {
+
+            e.printStackTrace();
+
         } finally {
 
             driver.quit();
+
         }
+
+        System.out.println(
+                "\n=============================================="
+        );
+
+        System.out.println(
+                "       LOCATOR HEALTH CHECK COMPLETE"
+        );
+
+        System.out.println(
+                "=============================================="
+        );
     }
 }

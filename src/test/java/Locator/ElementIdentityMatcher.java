@@ -38,117 +38,129 @@ public class ElementIdentityMatcher {
     }
 
     /**
-     * Finds the current DOM element that most closely
-     * matches the old element profile.
+     * Compare an old element profile against all current DOM elements
+     * and return the highest scoring candidate.
      */
     public MatchResult findBestMatch(
             ElementProfile oldProfile,
             List<Element> currentElements) {
 
-        List<MatchResult> results = new ArrayList<>();
+        if (oldProfile == null
+                || currentElements == null
+                || currentElements.isEmpty()) {
+
+            return null;
+        }
+
+        List<MatchResult> results =
+                new ArrayList<>();
 
         for (Element current : currentElements) {
 
             int score = 0;
-            List<String> signals = new ArrayList<>();
+
+            List<String> signals =
+                    new ArrayList<>();
 
             // -------------------------------------------------
-            // 1. TAG
+            // TAG
+            // Strong structural signal
             // -------------------------------------------------
             if (same(
                     oldProfile.getTagName(),
                     current.tagName())) {
 
                 score += 20;
-                signals.add("tag");
+                signals.add("TAG");
             }
 
             // -------------------------------------------------
-            // 2. ID
+            // ID
+            // Strong signal when stable
             // -------------------------------------------------
             if (same(
                     oldProfile.getId(),
                     current.attr("id"))) {
 
                 score += 20;
-                signals.add("id");
+                signals.add("ID");
             }
 
             // -------------------------------------------------
-            // 3. NAME
+            // NAME
             // -------------------------------------------------
             if (same(
                     oldProfile.getName(),
                     current.attr("name"))) {
 
                 score += 20;
-                signals.add("name");
+                signals.add("NAME");
             }
 
             // -------------------------------------------------
-            // 4. TYPE
+            // TYPE
             // -------------------------------------------------
             if (same(
                     oldProfile.getType(),
                     current.attr("type"))) {
 
                 score += 10;
-                signals.add("type");
+                signals.add("TYPE");
             }
 
             // -------------------------------------------------
-            // 5. PLACEHOLDER
+            // PLACEHOLDER
             // -------------------------------------------------
             if (same(
                     oldProfile.getPlaceholder(),
                     current.attr("placeholder"))) {
 
                 score += 15;
-                signals.add("placeholder");
+                signals.add("PLACEHOLDER");
             }
 
             // -------------------------------------------------
-            // 6. ARIA LABEL
+            // ARIA LABEL
             // -------------------------------------------------
             if (same(
                     oldProfile.getAriaLabel(),
                     current.attr("aria-label"))) {
 
                 score += 15;
-                signals.add("aria-label");
+                signals.add("ARIA-LABEL");
             }
 
             // -------------------------------------------------
-            // 7. ROLE
+            // ROLE
             // -------------------------------------------------
             if (same(
                     oldProfile.getRole(),
                     current.attr("role"))) {
 
                 score += 10;
-                signals.add("role");
+                signals.add("ROLE");
             }
 
             // -------------------------------------------------
-            // 8. TEXT
+            // TEXT
             // -------------------------------------------------
             if (same(
                     oldProfile.getText(),
                     current.text())) {
 
                 score += 10;
-                signals.add("text");
+                signals.add("TEXT");
             }
 
             // -------------------------------------------------
-            // 9. CLASS
+            // CLASS
             // -------------------------------------------------
             if (classOverlap(
                     oldProfile.getClassName(),
                     current.attr("class"))) {
 
                 score += 10;
-                signals.add("class");
+                signals.add("CLASS");
             }
 
             results.add(
@@ -169,6 +181,9 @@ public class ElementIdentityMatcher {
                 .orElse(null);
     }
 
+    /**
+     * Exact case-insensitive comparison.
+     */
     private boolean same(
             String oldValue,
             String currentValue) {
@@ -185,6 +200,10 @@ public class ElementIdentityMatcher {
                 );
     }
 
+    /**
+     * Checks whether at least one CSS class
+     * is shared between old and current element.
+     */
     private boolean classOverlap(
             String oldClasses,
             String currentClasses) {
@@ -206,6 +225,7 @@ public class ElementIdentityMatcher {
             for (String currentToken : currentTokens) {
 
                 if (oldToken.equalsIgnoreCase(currentToken)) {
+
                     return true;
                 }
             }

@@ -10,7 +10,7 @@ import java.time.Duration;
 
 public class LoginPage {
 
-    private static String uname = "//*[@placeholder='User']";
+    private static String uname = "//*[@name='user_name']";
     private static String pwd = "input[name='paword']";
     private static String login = "//button[normalize-space()='Login']";
 

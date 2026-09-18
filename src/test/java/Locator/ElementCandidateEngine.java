@@ -1,5 +1,7 @@
 package Locator;
 
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
 import java.util.ArrayList;
@@ -8,90 +10,280 @@ import java.util.List;
 
 public class ElementCandidateEngine {
 
-    private final DomAnalyzer domAnalyzer;
+    /**
+     * Finds elements in the CURRENT DOM that most closely
+     * match the OLD element profile.
+     */
+    public List<ElementCandidate> findCandidates(
+            ElementProfile oldProfile,
+            String currentHtml) {
 
-    public ElementCandidateEngine(DomAnalyzer domAnalyzer) {
-        this.domAnalyzer = domAnalyzer;
-    }
+        List<ElementCandidate> candidates =
+                new ArrayList<>();
 
-    public List<ElementCandidate> findCandidates(String variableName) {
+        if (oldProfile == null
+                || currentHtml == null
+                || currentHtml.isBlank()) {
 
-        List<ElementCandidate> candidates = new ArrayList<>();
+            return candidates;
+        }
+
+        Document document =
+                Jsoup.parse(currentHtml);
 
         List<Element> elements =
-                domAnalyzer.getInteractiveElements();
+                getMeaningfulElements(document);
 
         for (Element element : elements) {
 
-            int score = calculateScore(variableName, element);
+            int score =
+                    calculateScore(
+                            oldProfile,
+                            element
+                    );
 
             if (score > 0) {
+
                 candidates.add(
-                        new ElementCandidate(element, score)
+                        new ElementCandidate(
+                                element,
+                                score
+                        )
                 );
             }
         }
 
         candidates.sort(
-                Comparator.comparingInt(
-                        ElementCandidate::getScore
-                ).reversed()
+                Comparator
+                        .comparingInt(
+                                ElementCandidate::getScore
+                        )
+                        .reversed()
         );
 
         return candidates;
     }
 
+    /**
+     * We focus on elements that can reasonably be
+     * interacted with or identified by a locator.
+     *
+     * Hidden inputs are deliberately ignored.
+     */
+    private List<Element> getMeaningfulElements(
+            Document document) {
+
+        List<Element> elements =
+                new ArrayList<>();
+
+        String[] selectors = {
+                "input",
+                "button",
+                "textarea",
+                "select",
+                "a"
+        };
+
+        for (String selector : selectors) {
+
+            for (Element element :
+                    document.select(selector)) {
+
+                if ("hidden".equalsIgnoreCase(
+                        element.attr("type"))) {
+
+                    continue;
+                }
+
+                elements.add(element);
+            }
+        }
+
+        return elements;
+    }
+
     private int calculateScore(
-            String variableName,
-            Element element) {
+            ElementProfile oldProfile,
+            Element currentElement) {
 
         int score = 0;
 
-        String variable =
-                variableName.toLowerCase();
+        /*
+         * TAG
+         */
+        if (same(
+                oldProfile.getTagName(),
+                currentElement.tagName())) {
 
-        String ariaLabel =
-                element.attr("aria-label").toLowerCase();
-
-        String placeholder =
-                element.attr("placeholder").toLowerCase();
-
-        String name =
-                element.attr("name").toLowerCase();
-
-        String id =
-                element.attr("id").toLowerCase();
-
-        String text =
-                element.text().toLowerCase();
-
-        if (variable.contains("user")
-                && (ariaLabel.contains("user")
-                || placeholder.contains("user")
-                || name.contains("user")
-                || id.contains("user")
-                || text.contains("user"))) {
-
-            score += 40;
+            score += 20;
         }
 
-        if (variable.contains("password")
-                && (ariaLabel.contains("password")
-                || placeholder.contains("password")
-                || name.contains("password")
-                || id.contains("password")
-                || text.contains("password"))) {
+        /*
+         * NAME
+         */
+        if (same(
+                oldProfile.getName(),
+                currentElement.attr("name"))) {
 
-            score += 40;
+            score += 30;
         }
 
-        if (variable.contains("login")
-                && element.tagName().equals("button")
-                && text.contains("login")) {
+        /*
+         * PLACEHOLDER
+         */
+        if (same(
+                oldProfile.getPlaceholder(),
+                currentElement.attr("placeholder"))) {
 
-            score += 40;
+            score += 25;
+        }
+
+        /*
+         * TYPE
+         */
+        if (same(
+                oldProfile.getType(),
+                currentElement.attr("type"))) {
+
+            score += 15;
+        }
+
+        /*
+         * ID
+         */
+        if (same(
+                oldProfile.getId(),
+                currentElement.attr("id"))) {
+
+            score += 10;
+        }
+
+        /*
+         * ROLE
+         */
+        if (same(
+                oldProfile.getRole(),
+                currentElement.attr("role"))) {
+
+            score += 15;
+        }
+
+        /*
+         * ARIA LABEL
+         */
+        if (same(
+                oldProfile.getAriaLabel(),
+                currentElement.attr("aria-label"))) {
+
+            score += 25;
+        }
+
+        /*
+         * TEXT
+         */
+        if (sameText(
+                oldProfile.getText(),
+                currentElement.text())) {
+
+            score += 20;
+        }
+
+        /*
+         * CLASS
+         *
+         * Low weight intentionally.
+         * Classes are often changed by the application.
+         */
+        if (classOverlap(
+                oldProfile.getClassName(),
+                currentElement.attr("class"))) {
+
+            score += 5;
         }
 
         return score;
+    }
+
+    private boolean same(
+            String oldValue,
+            String currentValue) {
+
+        if (isBlank(oldValue)
+                || isBlank(currentValue)) {
+
+            return false;
+        }
+
+        return oldValue
+                .trim()
+                .equalsIgnoreCase(
+                        currentValue.trim()
+                );
+    }
+
+    private boolean sameText(
+            String oldText,
+            String currentText) {
+
+        if (isBlank(oldText)
+                || isBlank(currentText)) {
+
+            return false;
+        }
+
+        return normalize(oldText)
+                .equalsIgnoreCase(
+                        normalize(currentText)
+                );
+    }
+
+    private boolean classOverlap(
+            String oldClasses,
+            String currentClasses) {
+
+        if (isBlank(oldClasses)
+                || isBlank(currentClasses)) {
+
+            return false;
+        }
+
+        String[] oldTokens =
+                oldClasses
+                        .trim()
+                        .split("\\s+");
+
+        String[] currentTokens =
+                currentClasses
+                        .trim()
+                        .split("\\s+");
+
+        for (String oldToken : oldTokens) {
+
+            for (String currentToken : currentTokens) {
+
+                if (oldToken.equalsIgnoreCase(
+                        currentToken)) {
+
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private String normalize(
+            String value) {
+
+        return value
+                .trim()
+                .replaceAll("\\s+", " ");
+    }
+
+    private boolean isBlank(
+            String value) {
+
+        return value == null
+                || value.isBlank();
     }
 }

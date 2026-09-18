@@ -15,13 +15,31 @@ public class DomSnapshotManagerTest {
 
         try {
 
+            // =========================================================
+            // 1. Page configuration
+            // =========================================================
+
+            String pageName = "login-page";
+
             String url =
                     "https://opensource-demo.orangehrmlive.com/web/index.php/auth/login";
 
-            // 1. Open application
+
+            // =========================================================
+            // 2. Open application
+            // =========================================================
+
+            System.out.println(
+                    "Opening application..."
+            );
+
             driver.get(url);
 
-            // 2. Get current DOM
+
+            // =========================================================
+            // 3. Get current DOM
+            // =========================================================
+
             String pageSource =
                     driver.getPageSource();
 
@@ -29,18 +47,49 @@ public class DomSnapshotManagerTest {
                     "DOM fetched successfully."
             );
 
-            // 3. Create snapshot manager
+
+            // =========================================================
+            // 4. Create snapshot manager
+            // =========================================================
+
             DomSnapshotManager snapshotManager =
                     new DomSnapshotManager();
 
-            // 4. Save DOM snapshot
+
+            // =========================================================
+            // 5. Get snapshot path
+            // =========================================================
+
             Path snapshotPath =
-                    snapshotManager.saveSnapshot(
-                            "login-page",
-                            pageSource
+                    snapshotManager.getSnapshotPath(
+                            pageName
                     );
 
-            // 5. Verify snapshot path
+
+            // =========================================================
+            // 6. Save / replace snapshot
+            // =========================================================
+            //
+            // replaceSnapshot() is used because the POC maintains
+            // only ONE snapshot for each page.
+            //
+            // Example:
+            //
+            // snapshots/
+            //     login-page.html
+            //
+            // =========================================================
+
+            snapshotManager.replaceSnapshot(
+                    pageName,
+                    pageSource
+            );
+
+
+            // =========================================================
+            // 7. Verify snapshot
+            // =========================================================
+
             System.out.println(
                     "\nSnapshot created successfully."
             );
@@ -52,6 +101,19 @@ public class DomSnapshotManagerTest {
             System.out.println(
                     snapshotPath.toAbsolutePath()
             );
+
+
+            // =========================================================
+            // 8. Verify that file exists
+            // =========================================================
+
+            System.out.println(
+                    "\nSnapshot exists: "
+                            + snapshotManager.snapshotExists(
+                            pageName
+                    )
+            );
+
 
         } finally {
 

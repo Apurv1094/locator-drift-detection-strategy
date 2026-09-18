@@ -1,233 +1,305 @@
 package Locator;
 
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.Set;
 
 public class LocatorRecoveryEngine {
 
     private final WebDriver driver;
-    private final DomAnalyzer domAnalyzer;
-    private final LocatorCandidateGenerator candidateGenerator;
-    private final LocatorCandidateValidator candidateValidator;
 
-    public LocatorRecoveryEngine(WebDriver driver) {
+    private final HistoricalElementResolver
+            historicalElementResolver;
+
+    private final ElementCandidateEngine
+            candidateEngine;
+
+    public LocatorRecoveryEngine(
+            WebDriver driver) {
 
         this.driver = driver;
 
-        this.domAnalyzer =
-                new DomAnalyzer(driver.getPageSource());
+        this.historicalElementResolver =
+                new HistoricalElementResolver();
 
-        this.candidateGenerator =
-                new LocatorCandidateGenerator();
-
-        this.candidateValidator =
-                new LocatorCandidateValidator(driver);
+        this.candidateEngine =
+                new ElementCandidateEngine();
     }
 
     /**
-     * Checks a locator and attempts recovery
-     * if the locator is broken.
+     * Main recovery flow:
+     *
+     * CURRENT DOM
+     *      ↓
+     * locator broken?
+     *      ↓
+     * OLD DOM
+     *      ↓
+     * old element
+     *      ↓
+     * old profile
+     *      ↓
+     * CURRENT DOM
+     *      ↓
+     * matching element
+     *      ↓
+     * new locator
      */
     public void processLocator(
-            LocatorDefinition locatorDefinition) {
-
-        String locator =
-                locatorDefinition.getLocatorValue();
-
-        String locatorType =
-                locatorDefinition.getLocatorType();
+            LocatorDefinition locator,
+            Path oldSnapshotPath,
+            String currentHtml) {
 
         System.out.println(
-                "\n=========================================="
+                "\n========== LOCATOR RECOVERY =========="
         );
 
         System.out.println(
-                "Page Object : "
-                        + locatorDefinition.getPageObjectFile()
+                "Variable: "
+                        + locator.getVariableName()
         );
 
         System.out.println(
-                "Variable    : "
-                        + locatorDefinition.getVariableName()
+                "Old Locator: "
+                        + locator.getLocatorValue()
         );
 
-        System.out.println(
-                "Type        : "
-                        + locatorType
-        );
-
-        System.out.println(
-                "Locator     : "
-                        + locator
-        );
-
-        // Step 1: Check existing locator
-        if (isLocatorWorking(
-                locator,
-                locatorType)) {
+        /*
+         * STEP 1
+         * Check whether the locator still works
+         * against the CURRENT application.
+         */
+        if (isValidCurrentLocator(locator)) {
 
             System.out.println(
-                    "Status      : HEALTHY"
+                    "Status       : VALID"
             );
 
             System.out.println(
-                    "No recovery required."
+                    "Recovery     : NOT REQUIRED"
             );
 
             return;
         }
 
-        // Step 2: Locator is broken
         System.out.println(
-                "Status      : BROKEN"
+                "Status       : BROKEN"
         );
 
-        // Step 3: Extract hint from old locator
-        LocatorHint hint =
-                extractLocatorHint(
-                        locator,
-                        locatorType
+        /*
+         * STEP 2
+         * Locate the element in the OLD DOM.
+         */
+        System.out.println(
+                "\n========== HISTORICAL ELEMENT =========="
+        );
+
+        Element oldElement =
+                historicalElementResolver.findElement(
+                        oldSnapshotPath,
+                        locator.getLocatorType(),
+                        locator.getLocatorValue()
                 );
 
-        if (hint == null) {
+        if (oldElement == null) {
 
             System.out.println(
-                    "Unable to analyze old locator."
+                    "Historical Element: NOT FOUND"
+            );
+
+            System.out.println(
+                    "Recovery cannot continue."
+            );
+
+            System.out.println(
+                    "Reason: The old locator does not "
+                            + "identify an element in the baseline DOM."
             );
 
             return;
         }
 
-        // Step 4: Find matching DOM element
-        ElementProfile matchedElement =
-                findBestMatch(hint);
+        System.out.println(
+                "Historical Element: FOUND"
+        );
 
-        if (matchedElement == null) {
+        /*
+         * STEP 3
+         * Create the OLD element profile.
+         */
+        ElementProfile oldProfile =
+                historicalElementResolver
+                        .createProfile(oldElement);
+
+        System.out.println(
+                "\nOLD ELEMENT PROFILE:"
+        );
+
+        System.out.println(
+                oldProfile
+        );
+
+        /*
+         * STEP 4
+         * Find matching element in CURRENT DOM.
+         */
+        System.out.println(
+                "\n========== CURRENT DOM MATCHING =========="
+        );
+
+        List<ElementCandidate> candidates =
+                candidateEngine.findCandidates(
+                        oldProfile,
+                        currentHtml
+                );
+
+        if (candidates.isEmpty()) {
 
             System.out.println(
-                    "No matching DOM element found."
+                    "No matching current element found."
             );
 
             return;
         }
 
-        // Step 5: Print matched element
         System.out.println(
-                "\nMatched Current DOM Element:"
+                "Candidates found: "
+                        + candidates.size()
         );
 
-        printProfile(matchedElement);
+        printCandidates(candidates);
 
-        // Step 6: Generate replacement locators
-        List<String> candidates =
-                candidateGenerator.generateCandidates(
-                        matchedElement
-                );
+        /*
+         * STEP 5
+         * Use the highest scoring candidate.
+         */
+        ElementCandidate bestCandidate =
+                candidates.get(0);
 
-        // Step 7: Evaluate candidates
-        List<CandidateResult> results =
-                candidateValidator.evaluateCandidates(
-                        candidates
-                );
+        Element recoveredElement =
+                bestCandidate.getElement();
 
         System.out.println(
-                "\n========== CANDIDATE EVALUATION =========="
+                "\n========== RECOVERED ELEMENT =========="
         );
 
-        int count = 1;
+        System.out.println(
+                "Score: "
+                        + bestCandidate.getScore()
+        );
 
-        for (CandidateResult result : results) {
+        System.out.println(
+                recoveredElement
+        );
+
+        /*
+         * STEP 6
+         * Generate locator candidates.
+         */
+        System.out.println(
+                "\n========== NEW LOCATOR CANDIDATES =========="
+        );
+
+        List<String> locatorCandidates =
+                generateLocatorSuggestions(
+                        recoveredElement
+                );
+
+        List<ValidatedLocator> validatedLocators =
+                validateAndScoreLocators(
+                        locatorCandidates,
+                        currentHtml
+                );
+
+        printValidatedLocators(
+                validatedLocators
+        );
+
+        /*
+         * STEP 7
+         * Recommend the highest ranked locator.
+         */
+        if (validatedLocators.isEmpty()) {
 
             System.out.println(
-                    "\n" + count + ". "
-                            + result.getLocator()
+                    "\nRecommendation: "
+                            + "No unique locator found."
             );
 
-            System.out.println(
-                    "   Match    : "
-                            + (result.isMatches()
-                            ? "YES"
-                            : "NO")
-            );
-
-            System.out.println(
-                    "   Elements : "
-                            + result.getElementCount()
-            );
-
-            System.out.println(
-                    "   Score    : "
-                            + result.getScore()
-            );
-
-            count++;
+            return;
         }
 
-        // Step 8: Select best candidate
-        if (!results.isEmpty()) {
+        ValidatedLocator recommended =
+                validatedLocators.get(0);
 
-            CandidateResult bestCandidate =
-                    results.get(0);
+        System.out.println(
+                "\n========== RECOMMENDATION =========="
+        );
 
-            if (bestCandidate.isMatches()
-                    && bestCandidate.getElementCount() == 1) {
+        System.out.println(
+                "Recommended Locator Type: "
+                        + recommended.type
+        );
 
-                System.out.println(
-                        "\n========== RECOMMENDATION =========="
-                );
+        System.out.println(
+                "Recommended Locator: "
+                        + recommended.value
+        );
 
-                System.out.println(
-                        "Recommended Locator : "
-                                + bestCandidate.getLocator()
-                );
+        System.out.println(
+                "Matches: "
+                        + recommended.matches
+        );
 
-                System.out.println(
-                        "Confidence          : "
-                                + bestCandidate.getScore()
-                                + "%"
-                );
-
-            } else {
-
-                System.out.println(
-                        "\nNo reliable locator recommendation."
-                );
-            }
-        }
+        System.out.println(
+                "Final Score: "
+                        + recommended.score
+        );
     }
 
-
     /**
-     * Checks whether the locator currently
-     * exists on the page.
+     * Checks the locator against the CURRENT browser DOM.
      */
-    private boolean isLocatorWorking(
-            String locator,
-            String locatorType) {
+    private boolean isValidCurrentLocator(
+            LocatorDefinition locator) {
 
         try {
 
             By by;
 
-            if (locatorType.equalsIgnoreCase("XPATH")) {
+            if ("XPATH".equalsIgnoreCase(
+                    locator.getLocatorType())) {
 
-                by = By.xpath(locator);
+                by =
+                        By.xpath(
+                                locator.getLocatorValue()
+                        );
 
-            } else if (
-                    locatorType.equalsIgnoreCase("CSS")) {
+            } else if ("CSS".equalsIgnoreCase(
+                    locator.getLocatorType())) {
 
-                by = By.cssSelector(locator);
+                by =
+                        By.cssSelector(
+                                locator.getLocatorValue()
+                        );
 
             } else {
 
                 return false;
             }
 
-            return !driver.findElements(by).isEmpty();
+            return !driver
+                    .findElements(by)
+                    .isEmpty();
 
         } catch (Exception e) {
 
@@ -235,576 +307,503 @@ public class LocatorRecoveryEngine {
         }
     }
 
+    private void printCandidates(
+            List<ElementCandidate> candidates) {
+
+        int number = 1;
+
+        for (ElementCandidate candidate :
+                candidates) {
+
+            System.out.println(
+                    "\nCandidate #"
+                            + number
+            );
+
+            System.out.println(
+                    "Score: "
+                            + candidate.getScore()
+            );
+
+            System.out.println(
+                    "Element:"
+            );
+
+            System.out.println(
+                    candidate.getElement()
+            );
+
+            number++;
+        }
+    }
 
     /**
-     * Extracts tag, attribute and value from
-     * common XPath and CSS locators.
+     * Generates possible locators for the RECOVERED
+     * CURRENT element.
      */
-    private LocatorHint extractLocatorHint(
+    private List<String> generateLocatorSuggestions(
+            Element element) {
+
+        List<String> suggestions =
+                new ArrayList<>();
+
+        String tag =
+                element.tagName();
+
+        String id =
+                element.attr("id");
+
+        String name =
+                element.attr("name");
+
+        String placeholder =
+                element.attr("placeholder");
+
+        String type =
+                element.attr("type");
+
+        String ariaLabel =
+                element.attr("aria-label");
+
+        String role =
+                element.attr("role");
+
+        String text =
+                element.text().trim();
+
+        /*
+         * ID
+         */
+        if (!id.isEmpty()) {
+
+            suggestions.add(
+                    "CSS::#" + escapeCss(id)
+            );
+        }
+
+        /*
+         * NAME
+         */
+        if (!name.isEmpty()) {
+
+            suggestions.add(
+                    "CSS::"
+                            + tag
+                            + "[name='"
+                            + escapeCss(name)
+                            + "']"
+            );
+        }
+
+        /*
+         * NAME + TYPE
+         */
+        if (!name.isEmpty()
+                && !type.isEmpty()) {
+
+            suggestions.add(
+                    "CSS::"
+                            + tag
+                            + "[name='"
+                            + escapeCss(name)
+                            + "'][type='"
+                            + escapeCss(type)
+                            + "']"
+            );
+        }
+
+        /*
+         * PLACEHOLDER
+         */
+        if (!placeholder.isEmpty()) {
+
+            suggestions.add(
+                    "CSS::"
+                            + tag
+                            + "[placeholder='"
+                            + escapeCss(placeholder)
+                            + "']"
+            );
+        }
+
+        /*
+         * NAME + PLACEHOLDER
+         */
+        if (!name.isEmpty()
+                && !placeholder.isEmpty()) {
+
+            suggestions.add(
+                    "CSS::"
+                            + tag
+                            + "[name='"
+                            + escapeCss(name)
+                            + "'][placeholder='"
+                            + escapeCss(placeholder)
+                            + "']"
+            );
+        }
+
+        /*
+         * ARIA LABEL
+         */
+        if (!ariaLabel.isEmpty()) {
+
+            suggestions.add(
+                    "CSS::"
+                            + tag
+                            + "[aria-label='"
+                            + escapeCss(ariaLabel)
+                            + "']"
+            );
+        }
+
+        /*
+         * ROLE
+         */
+        if (!role.isEmpty()) {
+
+            suggestions.add(
+                    "CSS::"
+                            + tag
+                            + "[role='"
+                            + escapeCss(role)
+                            + "']"
+            );
+        }
+
+        /*
+         * TYPE
+         */
+        if (!type.isEmpty()) {
+
+            suggestions.add(
+                    "CSS::"
+                            + tag
+                            + "[type='"
+                            + escapeCss(type)
+                            + "']"
+            );
+        }
+
+        /*
+         * TEXT
+         */
+        if (!text.isEmpty()
+                && text.length() < 80) {
+
+            suggestions.add(
+                    "XPATH:://"
+                            + tag
+                            + "[normalize-space()='"
+                            + escapeXPath(text)
+                            + "']"
+            );
+        }
+
+        return removeDuplicates(
+                suggestions
+        );
+    }
+
+    /**
+     * Validates every generated locator against
+     * the CURRENT DOM and assigns a stability score.
+     */
+    private List<ValidatedLocator>
+    validateAndScoreLocators(
+            List<String> candidates,
+            String currentHtml) {
+
+        List<ValidatedLocator> validated =
+                new ArrayList<>();
+
+        for (String candidate :
+                candidates) {
+
+            String[] parts =
+                    candidate.split(
+                            "::",
+                            2
+                    );
+
+            if (parts.length != 2) {
+                continue;
+            }
+
+            String type =
+                    parts[0];
+
+            String value =
+                    parts[1];
+
+            int matches =
+                    countMatches(
+                            type,
+                            value,
+                            currentHtml
+                    );
+
+            /*
+             * We only recommend a unique locator.
+             */
+            if (matches != 1) {
+                continue;
+            }
+
+            int stability =
+                    locatorStabilityScore(
+                            value
+                    );
+
+            int finalScore =
+                    stability + 30;
+
+            validated.add(
+                    new ValidatedLocator(
+                            type,
+                            value,
+                            matches,
+                            stability,
+                            finalScore
+                    )
+            );
+        }
+
+        validated.sort(
+                (a, b) ->
+                        Integer.compare(
+                                b.score,
+                                a.score
+                        )
+        );
+
+        return validated;
+    }
+
+    private int countMatches(
+            String type,
             String locator,
-            String locatorType) {
+            String html) {
 
-        locator = locator.trim();
+        try {
 
-        // =========================
-        // XPATH
-        // =========================
+            Document document =
+                    Jsoup.parse(html);
 
-        if (locatorType.equalsIgnoreCase("XPATH")) {
+            if ("CSS".equalsIgnoreCase(type)) {
 
-            /*
-             * Examples:
-             *
-             * //input[@placeholder='User']
-             * //input[@name='username']
-             * //input[@type='password']
-             * //button[@type='submit']
-             */
-
-            Pattern attributePattern =
-                    Pattern.compile(
-                            "//([a-zA-Z0-9_*.-]+)" +
-                                    "\\[@([a-zA-Z0-9_:-]+)" +
-                                    "\\s*=\\s*" +
-                                    "['\"]([^'\"]+)['\"]\\]"
-                    );
-
-            Matcher matcher =
-                    attributePattern.matcher(locator);
-
-            if (matcher.find()) {
-
-                return new LocatorHint(
-                        matcher.group(1),
-                        matcher.group(2),
-                        matcher.group(3)
-                );
+                return document
+                        .select(locator)
+                        .size();
             }
 
-            /*
-             * Example:
-             *
-             * //button[normalize-space()='Login']
-             */
+            if ("XPATH".equalsIgnoreCase(type)) {
 
-            Pattern textPattern =
-                    Pattern.compile(
-                            "//([a-zA-Z0-9_-]+)" +
-                                    "\\[normalize-space\\(\\)" +
-                                    "\\s*=\\s*" +
-                                    "['\"]([^'\"]+)['\"]\\]"
-                    );
-
-            matcher =
-                    textPattern.matcher(locator);
-
-            if (matcher.find()) {
-
-                return new LocatorHint(
-                        matcher.group(1),
-                        "text",
-                        matcher.group(2)
-                );
+                return evaluateSimpleXPath(
+                        document,
+                        locator
+                ).size();
             }
+
+        } catch (Exception e) {
+
+            System.out.println(
+                    "Unable to validate locator: "
+                            + locator
+            );
         }
 
+        return 0;
+    }
 
-        // =========================
-        // CSS
-        // =========================
+    /**
+     * Supports the simple text XPath generated
+     * by this POC.
+     */
+    private Elements evaluateSimpleXPath(
+            Document document,
+            String xpath) {
 
-        if (locatorType.equalsIgnoreCase("CSS")) {
-
-            /*
-             * Examples:
-             *
-             * input[name='password']
-             * input[placeholder='Username']
-             * button[type='submit']
-             */
-
-            Pattern cssPattern =
-                    Pattern.compile(
-                            "([a-zA-Z0-9_-]+)" +
-                                    "\\[([a-zA-Z0-9_:-]+)" +
-                                    "\\s*=\\s*" +
-                                    "['\"]?([^\\]'\"\\s]+)" +
-                                    "['\"]?\\]"
-                    );
-
-            Matcher matcher =
-                    cssPattern.matcher(locator);
-
-            if (matcher.find()) {
-
-                return new LocatorHint(
-                        matcher.group(1),
-                        matcher.group(2),
-                        matcher.group(3)
+        java.util.regex.Pattern pattern =
+                java.util.regex.Pattern.compile(
+                        "//([a-zA-Z][a-zA-Z0-9_-]*)"
+                                + "\\[normalize-space\\(\\)='([^']+)'\\]"
                 );
-            }
 
-            /*
-             * CSS ID:
-             *
-             * #username
-             */
+        java.util.regex.Matcher matcher =
+                pattern.matcher(xpath);
 
-            if (locator.startsWith("#")) {
+        if (!matcher.matches()) {
 
-                return new LocatorHint(
-                        "*",
-                        "id",
-                        locator.substring(1)
-                );
-            }
+            return new Elements();
+        }
 
-            /*
-             * CSS class:
-             *
-             * .username
-             */
+        String tag =
+                matcher.group(1);
 
-            if (locator.startsWith(".")) {
+        String text =
+                matcher.group(2);
 
-                return new LocatorHint(
-                        "*",
-                        "class",
-                        locator.substring(1)
-                );
+        Elements elements =
+                document.select(tag);
+
+        Elements matches =
+                new Elements();
+
+        for (Element element :
+                elements) {
+
+            if (element.text()
+                    .trim()
+                    .equals(text)) {
+
+                matches.add(element);
             }
         }
 
-        return null;
+        return matches;
     }
 
+    private int locatorStabilityScore(
+            String locator) {
+
+        /*
+         * Stable identity first.
+         */
+        if (locator.startsWith("#")) {
+            return 100;
+        }
+
+        if (locator.contains("[name='")
+                && locator.contains("[type='")) {
+
+            return 95;
+        }
+
+        if (locator.contains("[name='")) {
+            return 95;
+        }
+
+        if (locator.contains("[placeholder='")) {
+            return 90;
+        }
+
+        if (locator.contains("[aria-label='")) {
+            return 90;
+        }
+
+        if (locator.contains("[role='")) {
+            return 85;
+        }
+
+        if (locator.contains("[type='")) {
+            return 75;
+        }
+
+        if (locator.startsWith("//")) {
+            return 70;
+        }
+
+        return 50;
+    }
+
+    private void printValidatedLocators(
+            List<ValidatedLocator> locators) {
+
+        System.out.println(
+                "\n========== VALIDATED LOCATORS =========="
+        );
+
+        int number = 1;
+
+        for (ValidatedLocator locator :
+                locators) {
+
+            System.out.println(
+                    "\nCandidate #"
+                            + number
+            );
+
+            System.out.println(
+                    "Type: "
+                            + locator.type
+            );
+
+            System.out.println(
+                    "Locator: "
+                            + locator.value
+            );
+
+            System.out.println(
+                    "Matches: "
+                            + locator.matches
+            );
+
+            System.out.println(
+                    "Stability Score: "
+                            + locator.stability
+            );
+
+            System.out.println(
+                    "Final Score: "
+                            + locator.score
+            );
+
+            number++;
+        }
+    }
+
+    private List<String> removeDuplicates(
+            List<String> values) {
+
+        Set<String> unique =
+                new LinkedHashSet<>(values);
+
+        return new ArrayList<>(unique);
+    }
+
+    private String escapeCss(
+            String value) {
+
+        return value.replace(
+                "'",
+                "\\'"
+        );
+    }
+
+    private String escapeXPath(
+            String value) {
+
+        return value.replace(
+                "'",
+                "’"
+        );
+    }
 
     /**
-     * Finds the most likely current DOM element.
+     * Small internal result object used only
+     * for ranking validated locators.
      */
-    private ElementProfile findBestMatch(
-            LocatorHint hint) {
+    private static class ValidatedLocator {
 
-        List<ElementProfile> profiles =
-                domAnalyzer.getElementProfiles();
-
-        ElementProfile bestMatch = null;
-
-        double bestScore = 0;
-
-        for (ElementProfile profile : profiles) {
-
-            double score =
-                    calculateScore(
-                            profile,
-                            hint
-                    );
-
-            if (score > bestScore) {
-
-                bestScore = score;
-                bestMatch = profile;
-            }
-        }
-
-        if (bestScore < 0.40) {
-
-            return null;
-        }
-
-        System.out.println(
-                "\nMatch Confidence: "
-                        + String.format(
-                        "%.2f",
-                        bestScore
-                )
-        );
-
-        return bestMatch;
-    }
-
-
-    /**
-     * Calculates similarity between the
-     * broken locator and current DOM element.
-     */
-    private double calculateScore(
-            ElementProfile profile,
-            LocatorHint hint) {
-
-        double score = 0;
-
-        // Tag match
-        if (hint.tag.equals("*")
-                || profile.getTagName()
-                .equalsIgnoreCase(hint.tag)) {
-
-            score += 0.30;
-        }
-
-        // Attribute exists
-        if (matchesAttribute(
-                profile,
-                hint.attribute)) {
-
-            score += 0.30;
-        }
-
-        // Compare old value against
-        // the SAME current DOM attribute
-        double similarity =
-                calculateValueSimilarity(
-                        profile,
-                        hint.attribute,
-                        hint.value
-                );
-
-        score += similarity * 0.40;
-
-        return score;
-    }
-
-
-    /**
-     * Checks whether the specified attribute
-     * exists on the current DOM element.
-     */
-    private boolean matchesAttribute(
-            ElementProfile profile,
-            String attribute) {
-
-        switch (attribute.toLowerCase()) {
-
-            case "id":
-                return !isEmpty(
-                        profile.getId()
-                );
-
-            case "name":
-                return !isEmpty(
-                        profile.getName()
-                );
-
-            case "type":
-                return !isEmpty(
-                        profile.getType()
-                );
-
-            case "placeholder":
-                return !isEmpty(
-                        profile.getPlaceholder()
-                );
-
-            case "class":
-                return !isEmpty(
-                        profile.getClassName()
-                );
-
-            case "role":
-                return !isEmpty(
-                        profile.getRole()
-                );
-
-            case "aria-label":
-                return !isEmpty(
-                        profile.getAriaLabel()
-                );
-
-            case "text":
-                return !isEmpty(
-                        profile.getText()
-                );
-
-            default:
-                return false;
-        }
-    }
-
-
-    /**
-     * Compares the old locator value
-     * against the SAME attribute in the
-     * current DOM element.
-     */
-    private double calculateValueSimilarity(
-            ElementProfile profile,
-            String attribute,
-            String oldValue) {
-
-        String currentValue;
-
-        switch (attribute.toLowerCase()) {
-
-            case "id":
-
-                currentValue =
-                        profile.getId();
-
-                break;
-
-            case "name":
-
-                currentValue =
-                        profile.getName();
-
-                break;
-
-            case "type":
-
-                currentValue =
-                        profile.getType();
-
-                break;
-
-            case "placeholder":
-
-                currentValue =
-                        profile.getPlaceholder();
-
-                break;
-
-            case "class":
-
-                currentValue =
-                        profile.getClassName();
-
-                break;
-
-            case "role":
-
-                currentValue =
-                        profile.getRole();
-
-                break;
-
-            case "aria-label":
-
-                currentValue =
-                        profile.getAriaLabel();
-
-                break;
-
-            case "text":
-
-                currentValue =
-                        profile.getText();
-
-                break;
-
-            default:
-
-                currentValue = "";
-        }
-
-        return similarity(
-                oldValue,
-                currentValue
-        );
-    }
-
-
-    /**
-     * Simple fuzzy matching.
-     */
-    private double similarity(
-            String oldValue,
-            String currentValue) {
-
-        if (isEmpty(oldValue)
-                || isEmpty(currentValue)) {
-
-            return 0;
-        }
-
-        String oldText =
-                oldValue.trim().toLowerCase();
-
-        String currentText =
-                currentValue.trim().toLowerCase();
-
-        // Exact match
-        if (oldText.equals(currentText)) {
-
-            return 1.0;
-        }
-
-        // Contains match
-        if (currentText.contains(oldText)
-                || oldText.contains(currentText)) {
-
-            return 0.90;
-        }
-
-        // Levenshtein
-        int distance =
-                levenshteinDistance(
-                        oldText,
-                        currentText
-                );
-
-        int maxLength =
-                Math.max(
-                        oldText.length(),
-                        currentText.length()
-                );
-
-        if (maxLength == 0) {
-
-            return 0;
-        }
-
-        return 1.0 -
-                ((double) distance / maxLength);
-    }
-
-
-    /**
-     * Calculates Levenshtein distance.
-     */
-    private int levenshteinDistance(
-            String first,
-            String second) {
-
-        int[][] matrix =
-                new int[
-                        first.length() + 1
-                        ][
-                        second.length() + 1
-                        ];
-
-        for (int i = 0;
-             i <= first.length();
-             i++) {
-
-            matrix[i][0] = i;
-        }
-
-        for (int j = 0;
-             j <= second.length();
-             j++) {
-
-            matrix[0][j] = j;
-        }
-
-        for (int i = 1;
-             i <= first.length();
-             i++) {
-
-            for (int j = 1;
-                 j <= second.length();
-                 j++) {
-
-                int cost =
-                        first.charAt(i - 1)
-                                == second.charAt(j - 1)
-                                ? 0
-                                : 1;
-
-                matrix[i][j] =
-                        Math.min(
-                                Math.min(
-                                        matrix[i - 1][j] + 1,
-                                        matrix[i][j - 1] + 1
-                                ),
-                                matrix[i - 1][j - 1] + cost
-                        );
-            }
-        }
-
-        return matrix[
-                first.length()
-                ][
-                second.length()
-                ];
-    }
-
-
-    private boolean isEmpty(String value) {
-
-        return value == null
-                || value.trim().isEmpty();
-    }
-
-
-    /**
-     * Prints the current DOM element profile.
-     */
-    private void printProfile(
-            ElementProfile profile) {
-
-        System.out.println(
-                "------------------------------------------"
-        );
-
-        System.out.println(
-                "Tag         : "
-                        + profile.getTagName()
-        );
-
-        System.out.println(
-                "ID          : "
-                        + profile.getId()
-        );
-
-        System.out.println(
-                "Name        : "
-                        + profile.getName()
-        );
-
-        System.out.println(
-                "Type        : "
-                        + profile.getType()
-        );
-
-        System.out.println(
-                "Placeholder : "
-                        + profile.getPlaceholder()
-        );
-
-        System.out.println(
-                "Class       : "
-                        + profile.getClassName()
-        );
-
-        System.out.println(
-                "Role        : "
-                        + profile.getRole()
-        );
-
-        System.out.println(
-                "Aria-label  : "
-                        + profile.getAriaLabel()
-        );
-
-        System.out.println(
-                "Text        : "
-                        + profile.getText()
-        );
-
-        System.out.println(
-                "------------------------------------------"
-        );
-    }
-
-
-    /**
-     * Internal representation of a locator.
-     */
-    private static class LocatorHint {
-
-        private final String tag;
-        private final String attribute;
+        private final String type;
         private final String value;
+        private final int matches;
+        private final int stability;
+        private final int score;
 
-        private LocatorHint(
-                String tag,
-                String attribute,
-                String value) {
+        private ValidatedLocator(
+                String type,
+                String value,
+                int matches,
+                int stability,
+                int score) {
 
-            this.tag = tag;
-            this.attribute = attribute;
+            this.type = type;
             this.value = value;
+            this.matches = matches;
+            this.stability = stability;
+            this.score = score;
         }
     }
 }
-
